@@ -2,9 +2,12 @@ import express from "express";
 import axios from "axios";
 import * as cheerio from "cheerio";
 import cors from "cors";
+import pLimit from "p-limit";
 
 const app = express();
 app.use(cors());
+
+const limit = pLimit(5); // 🔥 max 5 parallel requests
 
 app.get("/api/videos", async (req, res) => {
   try {
@@ -25,67 +28,75 @@ app.get("/api/videos", async (req, res) => {
 
     const url = `https://acharyaprashant.org/on-youtube?${params.toString()}`;
 
-    // 🔥 Step 1: Fetch main page
-    const response = await axios.get(url);
-    const html = response.data;
-
+    // 🔥 Step 1: fetch main page
+    const { data: html } = await axios.get(url);
     const $ = cheerio.load(html);
 
-    // 🔥 Step 2: Get limited cards (performance)
     const cards = $("div.block.p-3").toArray().slice(0, 50);
 
-    // 🔥 Step 3: Parallel scraping
+    // 🔥 Step 2: scrape videos in parallel
     const videos = await Promise.all(
-      cards.map(async (el) => {
-        try {
-          const $el = $(el);
-          const anchor = $el.find("a");
+      cards.map((el) =>
+        limit(async () => {
+          try {
+            const $el = $(el);
+            const anchor = $el.find("a");
 
-          const link = anchor.attr("href");
-          if (!link) return null;
+            const link = anchor.attr("href");
+            if (!link) return null;
 
-          // 🔥 Fetch individual video page
-          const videoPage = await axios.get(
-            `https://acharyaprashant.org${link}`
-          );
+            // 🔥 fetch video page
+            const { data: videoHtml } = await axios.get(
+              `https://acharyaprashant.org${link}`,
+            );
 
-          const $$ = cheerio.load(videoPage.data);
+            const $$ = cheerio.load(videoHtml);
 
-          const iframeSrc = $$("iframe").attr("src");
-          if (!iframeSrc || !iframeSrc.includes("/embed/")) return null;
+            // 🎯 thumbnail
+            const iframeSrc = $$("iframe").attr("src");
+            if (!iframeSrc) return null;
 
-          const videoId = iframeSrc.split("/embed/")[1].split("?")[0];
+            const videoId = iframeSrc.split("/embed/")[1]?.split("?")[0];
+            const thumbnail = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
 
-          const thumbnail = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+            // 🎯 basic data
+            const title = anchor.find("p").first().text().trim();
+            const channel = anchor.find("p").eq(1).text().trim();
+            const duration = anchor.find("div.absolute").text().trim();
 
-          // Extract other data
-          const title = anchor.find("p").first().text().trim();
-          const channel = anchor.find("p").eq(1).text().trim();
-          const duration = anchor.find("div.absolute").text().trim();
+            const spans = anchor.find("span");
+            const views = spans.eq(0).text().trim();
+            const timeAgo = spans.eq(1).text().trim();
 
-          const spans = anchor.find("span");
-          const views = spans.eq(0).text().trim();
-          const timeAgo = spans.eq(1).text().trim();
+            // 🔥 tags extraction
+            const tags = [];
 
-          return {
-            title,
-            thumbnail,
-            duration,
-            channel,
-            views,
-            timeAgo,
-            link: `https://acharyaprashant.org${link}`,
-          };
-        } catch (err) {
-          return null; // skip failed ones
-        }
-      })
+            $el.find("div.flex.gap-1\\.5.pt-3 div").each((i, el) => {
+              const text = $(el).text().trim();
+
+              if (text) {
+                tags.push(text);
+              }
+            });
+
+            return {
+              title,
+              thumbnail,
+              duration,
+              channel,
+              views,
+              timeAgo,
+              tags,
+              link: `https://acharyaprashant.org${link}`,
+            };
+          } catch (err) {
+            return null;
+          }
+        }),
+      ),
     );
 
-    // 🔥 Step 4: Clean response
-    const cleanVideos = videos.filter(Boolean);
-
-    res.json(cleanVideos);
+    res.json(videos.filter(Boolean));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Scraping failed" });
