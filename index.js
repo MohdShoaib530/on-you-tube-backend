@@ -21,9 +21,9 @@ app.use(
 
 // https agent
 const httpsAgent = new https.Agent({
-  keepAlive: false,
-  maxSockets: 3,
-  maxFreeSockets: 2,
+  keepAlive: true,
+  maxSockets: 8,
+  maxFreeSockets: 3,
 });
 
 //  axios instance
@@ -35,7 +35,7 @@ const api = axios.create({
   },
 });
 
-const limit = pLimit(3);
+const limit = pLimit(5);
 
 app.get("/api/videos", async (req, res) => {
   try {
@@ -73,7 +73,6 @@ app.get("/api/videos", async (req, res) => {
             const link = anchor.attr("href");
             if (!link) return null;
 
-
             // fetch video page
             const { data: videoHtml } = await api.get(
               `https://acharyaprashant.org${link}`,
@@ -96,8 +95,10 @@ app.get("/api/videos", async (req, res) => {
             }
 
             //  data
-            const title = anchor.find("p").first().text().trim();
-            const channel = anchor.find("p").eq(1).text().trim();
+            const pTags = anchor.find("p");
+
+            const title = pTags.eq(0).text().trim();
+            const channel = pTags.eq(1).text().trim();
             const duration = anchor.find("div.absolute").text().trim();
 
             const spans = anchor.find("span");
