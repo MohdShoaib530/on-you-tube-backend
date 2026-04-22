@@ -1,4 +1,6 @@
 import express from "express";
+import dotenv from 'dotenv'
+dotenv.config()
 import axios from "axios";
 import * as cheerio from "cheerio";
 import cors from "cors";
