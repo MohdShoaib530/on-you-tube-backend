@@ -1,6 +1,6 @@
 import express from "express";
-import dotenv from 'dotenv'
-dotenv.config()
+import dotenv from "dotenv";
+dotenv.config();
 import axios from "axios";
 import * as cheerio from "cheerio";
 import cors from "cors";
@@ -8,7 +8,10 @@ import pLimit from "p-limit";
 import https from "https";
 
 const app = express();
+import { EventEmitter } from "events";
+EventEmitter.defaultMaxListeners = 20;
 
+// CORS middleware
 app.use(
   cors({
     origin: process.env.FRONTEND_URL || "*",
@@ -16,13 +19,14 @@ app.use(
   }),
 );
 
-// ❌ keepAlive हटाया → memory leak warning बंद
+// https agent
 const httpsAgent = new https.Agent({
   keepAlive: false,
   maxSockets: 3,
+  maxFreeSockets: 2,
 });
 
-// ✅ clean axios instance
+//  axios instance
 const api = axios.create({
   httpsAgent,
   timeout: 10000,
@@ -31,7 +35,7 @@ const api = axios.create({
   },
 });
 
-const limit = pLimit(2); // 🔥 reduce more (important)
+const limit = pLimit(3);
 
 app.get("/api/videos", async (req, res) => {
   try {
@@ -52,13 +56,13 @@ app.get("/api/videos", async (req, res) => {
 
     const url = `https://acharyaprashant.org/on-youtube?${params.toString()}`;
 
-    // 🔥 Step 1: fetch main page
+    // fetch main html page
     const { data: html } = await api.get(url);
     const $ = cheerio.load(html);
 
     const cards = $("div.block.p-3").toArray().slice(0, 20);
 
-    // 🔥 Step 2: parallel scraping with limit
+    // parallel scraping with limit
     const videos = await Promise.all(
       cards.map((el) =>
         limit(async () => {
@@ -69,14 +73,15 @@ app.get("/api/videos", async (req, res) => {
             const link = anchor.attr("href");
             if (!link) return null;
 
-            // 🔥 fetch video page
+
+            // fetch video page
             const { data: videoHtml } = await api.get(
               `https://acharyaprashant.org${link}`,
             );
 
             const $$ = cheerio.load(videoHtml);
 
-            // 🎯 thumbnail
+            // thumbnail
             const iframeSrc = $$("iframe").attr("src");
             if (!iframeSrc) return null;
 
@@ -90,7 +95,7 @@ app.get("/api/videos", async (req, res) => {
               }
             }
 
-            // 🎯 basic data
+            //  data
             const title = anchor.find("p").first().text().trim();
             const channel = anchor.find("p").eq(1).text().trim();
             const duration = anchor.find("div.absolute").text().trim();
@@ -99,7 +104,7 @@ app.get("/api/videos", async (req, res) => {
             const views = spans.eq(0).text().trim();
             const timeAgo = spans.eq(1).text().trim();
 
-            // 🔥 tags (main page से)
+            // tags (main page)
             const tags = [];
             $el.find("div.flex.gap-1\\.5.pt-3 div").each((i, el) => {
               const text = $(el).text().trim();
@@ -123,10 +128,15 @@ app.get("/api/videos", async (req, res) => {
       ),
     );
 
-    res.json(videos.filter(Boolean));
+    res.status(200).json({
+      success: true,
+      data: videos.filter(Boolean),
+    });
   } catch (err) {
-    console.error(err.message);
-    res.status(500).json({ error: "Scraping failed" });
+    res.status(500).json({
+      success: false,
+      error: "Scraping failed",
+    });
   }
 });
 
