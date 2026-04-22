@@ -3,16 +3,33 @@ import axios from "axios";
 import * as cheerio from "cheerio";
 import cors from "cors";
 import pLimit from "p-limit";
+import https from "https";
 
 const app = express();
+
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL,
-    credentials: true
+    origin: process.env.FRONTEND_URL || "*",
+    credentials: true,
   })
 );
 
-const limit = pLimit(5); // 🔥 max 5 parallel requests
+// ❌ keepAlive हटाया → memory leak warning बंद
+const httpsAgent = new https.Agent({
+  keepAlive: false,
+  maxSockets: 3,
+});
+
+// ✅ clean axios instance
+const api = axios.create({
+  httpsAgent,
+  timeout: 10000,
+  headers: {
+    "User-Agent": "Mozilla/5.0",
+  },
+});
+
+const limit = pLimit(2); // 🔥 reduce more (important)
 
 app.get("/api/videos", async (req, res) => {
   try {
@@ -34,12 +51,12 @@ app.get("/api/videos", async (req, res) => {
     const url = `https://acharyaprashant.org/on-youtube?${params.toString()}`;
 
     // 🔥 Step 1: fetch main page
-    const { data: html } = await axios.get(url);
+    const { data: html } = await api.get(url);
     const $ = cheerio.load(html);
 
-    const cards = $("div.block.p-3").toArray().slice(0, 50);
+    const cards = $("div.block.p-3").toArray().slice(0, 20);
 
-    // 🔥 Step 2: scrape videos in parallel
+    // 🔥 Step 2: parallel scraping with limit
     const videos = await Promise.all(
       cards.map((el) =>
         limit(async () => {
@@ -51,8 +68,8 @@ app.get("/api/videos", async (req, res) => {
             if (!link) return null;
 
             // 🔥 fetch video page
-            const { data: videoHtml } = await axios.get(
-              `https://acharyaprashant.org${link}`,
+            const { data: videoHtml } = await api.get(
+              `https://acharyaprashant.org${link}`
             );
 
             const $$ = cheerio.load(videoHtml);
@@ -73,15 +90,11 @@ app.get("/api/videos", async (req, res) => {
             const views = spans.eq(0).text().trim();
             const timeAgo = spans.eq(1).text().trim();
 
-            // 🔥 tags extraction
+            // 🔥 tags (main page से)
             const tags = [];
-
             $el.find("div.flex.gap-1\\.5.pt-3 div").each((i, el) => {
               const text = $(el).text().trim();
-
-              if (text) {
-                tags.push(text);
-              }
+              if (text) tags.push(text);
             });
 
             return {
@@ -97,13 +110,13 @@ app.get("/api/videos", async (req, res) => {
           } catch (err) {
             return null;
           }
-        }),
-      ),
+        })
+      )
     );
 
     res.json(videos.filter(Boolean));
   } catch (err) {
-    console.error(err);
+    console.error(err.message);
     res.status(500).json({ error: "Scraping failed" });
   }
 });
