@@ -5,7 +5,12 @@ import cors from "cors";
 import pLimit from "p-limit";
 
 const app = express();
-app.use(cors());
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL,
+    credentials: true
+  })
+);
 
 const limit = pLimit(5); // 🔥 max 5 parallel requests
 
