@@ -11,7 +11,7 @@ app.use(
   cors({
     origin: process.env.FRONTEND_URL || "*",
     credentials: true,
-  })
+  }),
 );
 
 // ❌ keepAlive हटाया → memory leak warning बंद
@@ -69,7 +69,7 @@ app.get("/api/videos", async (req, res) => {
 
             // 🔥 fetch video page
             const { data: videoHtml } = await api.get(
-              `https://acharyaprashant.org${link}`
+              `https://acharyaprashant.org${link}`,
             );
 
             const $$ = cheerio.load(videoHtml);
@@ -78,8 +78,15 @@ app.get("/api/videos", async (req, res) => {
             const iframeSrc = $$("iframe").attr("src");
             if (!iframeSrc) return null;
 
-            const videoId = iframeSrc.split("/embed/")[1]?.split("?")[0];
-            const thumbnail = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+            let thumbnail = null;
+
+            if (iframeSrc && iframeSrc.includes("/embed/")) {
+              const videoId = iframeSrc.split("/embed/")[1]?.split("?")[0];
+
+              if (videoId) {
+                thumbnail = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+              }
+            }
 
             // 🎯 basic data
             const title = anchor.find("p").first().text().trim();
@@ -110,8 +117,8 @@ app.get("/api/videos", async (req, res) => {
           } catch (err) {
             return null;
           }
-        })
-      )
+        }),
+      ),
     );
 
     res.json(videos.filter(Boolean));
